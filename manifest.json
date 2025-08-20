@@ -1,0 +1,24 @@
+
+{
+  "name": "ChronoMind AI",
+  "short_name": "ChronoMind",
+  "description": "A premium Stopwatch & Timer application with AI-powered insights, background execution, and persistent notifications.",
+  "start_url": "/ChronoMind/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#007aff",
+  "icons": [
+    {
+      "src": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Icon-Stopwatch.svg/192px-Icon-Stopwatch.svg.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Icon-Stopwatch.svg/512px-Icon-Stopwatch.svg.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
