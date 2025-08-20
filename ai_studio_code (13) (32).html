@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>ChronoMind AI 8.1 (PWA)</title>
+    
+    <link rel="manifest" href="/ChronoMind/manifest.json">
+    <meta name="theme-color" content="#007aff">
+    
+    <!--
+      ChronoMind AI
+      Version: 8.1.2 (State Management & Bug Fix Release)
+      Author: Gemini
+      Description: Fixed critical bug where the save session modal would not appear on manual stop.
+                   State is now fully managed by the service worker to ensure robustness across page reloads.
+    -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Teko:wght@300;400;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        /* ------------------- */
+        /* --- CSS Reset & Globals --- */
+        /* ------------------- */
+        :root {
+            --bg-color: #f4f7f9;
+            --text-color: #1a1c2c;
+            --primary-color: #007aff;
+            --primary-gradient: linear-gradient(45deg, #007aff, #5856d6);
+            --secondary-color: #34c759;
+            --accent-color: #ff9500;
+            --danger-color: #ff3b30;
+            --pin-color: #5856d6;
+            --card-bg: #ffffff;
+            --shadow-color: rgba(0, 0, 0, 0.05); /* Softer iOS-like shadow */
+            --shadow-color-large: rgba(0, 0, 0, 0.08); /* Larger shadow for modals/controls */
+            --border-color: #e8e8e8;
+            --header-bg: rgba(247, 247, 247, 0.75); /* iOS Style */
+            --font-family-display: 'Orbitron', sans-serif;
+            --font-family-body: 'Teko', sans-serif;
+            --transition-speed: 0.4s;
+            --transition-spring: cubic-bezier(0.68, -0.6, 0.27, 1.6);
+        }
+
+        html.dark {
+            --bg-color: #000000;
+            --text-color: #f0f0f5;
+            --primary-color: #0a84ff;
+            --primary-gradient: linear-gradient(45deg, #0a84ff, #5e5ce6);
+            --secondary-color: #30d158;
+            --accent-color: #ff9f0a;
+            --danger-color: #ff453a;
+            --pin-color: #5e5ce6;
+            --card-bg: #1c1c1e;
+            --shadow-color: rgba(0, 0, 0, 0.4); /* Dark mode shadow */
+            --shadow-color-large: rgba(0, 0, 0, 0.6); /* Dark mode large shadow */
+            --border-color: #3a3a3c;
+            --header-bg: rgba(28, 28, 30, 0.75); /* iOS Style */
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: var(--font-family-body);
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.6;
+            font-size: clamp(18px, 2.5vw, 22px);
+            letter-spacing: 0.5px;
+            transition: background-color var(--transition-speed) ease, color var(--transition-speed) ease;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            position: relative;
+        }
+        
+        /* ------------------- */
+        /* --- Layout & Structure (ENHANCED) --- */
+        /* ------------------- */
+        #app-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            height: -webkit-fill-available;
+        }
+        
+        /* -- NEW: Modern iOS-inspired Header -- */
+        .app-header {
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            background-color: var(--header-bg);
+            backdrop-filter: blur(25px);
+            -webkit-backdrop-filter: blur(25px);
+            padding: 15px clamp(15px, 5vw, 30px);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background-color var(--transition-speed) ease, border-color var(--transition-speed) ease;
+            flex-shrink: 0;
+        }
+        html.dark .app-header { border-bottom: 1px solid rgba(255, 255, 255, 0.15); }
+
+        .app-header h1 {
+            font-family: var(--font-family-display);
+            font-size: clamp(24px, 6vw, 32px);
+            font-weight: 700;
+            background: -webkit-linear-gradient(45deg, var(--text-color), var(--primary-color));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* -- NEW: iOS Style Theme Toggle -- */
+        .theme-toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 28px;
+        }
+        .theme-toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 28px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 22px; width: 22px;
+            left: 3px; bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        input:checked + .slider { background-color: var(--secondary-color); }
+        input:checked + .slider:before { transform: translateX(22px); }
+        html.dark .slider { background-color: #39393d; }
+        
+        main {
+            flex-grow: 1;
+            overflow: hidden;
+            position: relative;
+            padding: 0 clamp(15px, 4vw, 30px);
+        }
+        
+        .view {
+            position: absolute;
+            top: 0; left: clamp(15px, 4vw, 30px);
+            right: clamp(15px, 4vw, 30px); bottom: 0;
+            overflow-y: auto;
+            padding-top: clamp(15px, 4vh, 30px);
+            padding-bottom: clamp(15px, 4vh, 30px);
+            opacity: 0; visibility: hidden;
+            transition: opacity 0.4s ease, transform 0.4s ease, visibility 0.4s ease;
+            transform: translateX(20px);
+            max-width: 1200px;
+            margin: 0 auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        .view.active { opacity: 1; visibility: visible; transform: translateX(0); }
+        .view.exiting { transform: translateX(-20px); }
+
+        /* -- NEW: Modern iOS-inspired Navigation Bar -- */
+        .app-nav {
+            position: relative;
+            bottom: 0; left: 0; right: 0;
+            background-color: var(--header-bg);
+            backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
+            border-top: 1px solid rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-around;
+            padding: 10px 0;
+            padding-bottom: calc(10px + env(safe-area-inset-bottom));
+            z-index: 1000;
+            flex-shrink: 0;
+        }
+        html.dark .app-nav { border-top: 1px solid rgba(255, 255, 255, 0.15); }
+
+        .nav-btn {
+            background: none; border: none;
+            color: var(--text-color);
+            opacity: 0.6; cursor: pointer;
+            display: flex; flex-direction: column; align-items: center;
+            font-size: clamp(14px, 2.2vw, 18px); font-weight: 500;
+            transition: opacity var(--transition-speed) ease, color var(--transition-speed) ease, transform 0.3s var(--transition-spring);
+            position: relative;
+        }
+        .nav-btn .icon { font-size: clamp(22px, 5vw, 28px); margin-bottom: 4px; }
+        .nav-btn.active { color: var(--primary-color); opacity: 1; }
+        
+        /* ------------------- */
+        /* --- Timer View --- */
+        /* ------------------- */
+        .timer-container {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            text-align: center;
+            gap: clamp(15px, 4vh, 30px);
+            padding-top: 5vh;
+            touch-action: pan-down;
+            overflow-x: hidden;
+        }
+        
+        .mode-switcher {
+            display: flex; background-color: var(--card-bg); border-radius: 20px;
+            padding: 5px; box-shadow: 0 4px 15px var(--shadow-color-large); border: 1px solid var(--border-color);
+        }
+        .mode-btn {
+            padding: 8px 20px; font-size: clamp(16px, 2.5vw, 20px);
+            font-family: var(--font-family-body); font-weight: 600; border: none;
+            background-color: transparent; color: var(--text-color); border-radius: 15px;
+            cursor: pointer; transition: all 0.5s var(--transition-spring);
+        }
+        .mode-btn.active { background: var(--primary-gradient); color: white; box-shadow: 0 4px 20px rgba(0, 122, 255, 0.4); }
+        
+        .timer-display-wrapper { 
+            position: relative; margin: 20px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .timer-display-wrapper::before {
+            content: ''; position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%); width: 150%; height: 150%;
+            background: radial-gradient(circle, var(--primary-color) 0%, rgba(255,255,255,0) 70%);
+            opacity: 0; filter: blur(40px); z-index: -1;
+            transition: opacity var(--transition-speed) ease;
+        }
+        .timer-display-wrapper.running::before {
+            opacity: 0.15;
+            animation: pulse 2s infinite ease-in-out;
+        }
+        @keyframes pulse { 50% { opacity: 0.25; transform: translate(-50%, -50%) scale(1.1); } }
+        html.dark .timer-display-wrapper.running::before { opacity: 0.2; }
+
+        .timer-display { display: flex; align-items: center; justify-content: center; gap: clamp(0px, 0.5vw, 2px); perspective: 1000px; }
+        .digit-group { display: flex; }
+        
+        .flipper-container {
+            font-size: clamp(2.2rem, 16vw, 6rem);
+            font-weight: 600; line-height: 1.1; position: relative;
+            width: 0.6em; height: 1em; margin: 0 0.05em;
+        }
+        .digit-card {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; align-items: center; justify-content: center;
+            background: var(--text-color); color: var(--bg-color);
+            border-radius: 0.1em; overflow: hidden; box-shadow: 0 2px 5px var(--shadow-color);
+        }
+        .flipper-card {
+            position: absolute; left: 0; width: 100%; height: 50%;
+            overflow: hidden; backface-visibility: hidden; -webkit-backface-visibility: hidden;
+            transform-style: preserve-3d;
+        }
+        .flipper-card.top {
+            top: 0; background: var(--text-color); color: var(--bg-color);
+            border-radius: 0.1em 0.1em 0 0; align-items: flex-end;
+            transform-origin: bottom; border-bottom: 1px solid rgba(0,0,0,0.2);
+        }
+        .flipper-card.bottom {
+            bottom: 0; background: #2a2c3c; color: #f0f0f5;
+            border-radius: 0 0 0.1em 0.1em; align-items: flex-start;
+        }
+        .flipper-card span { display: block; width: 100%; text-align: center; }
+        .flipper-card.top span { transform: translateY(50%); }
+        .flipper-card.bottom span { transform: translateY(-50%); }
+        .flipper { position: absolute; top:0; left: 0; width: 100%; height: 100%; }
+        .flipper.flipping .top { animation: flip-top 0.6s ease-in-out forwards; }
+        @keyframes flip-top { 100% { transform: rotateX(-180deg); } }
+
+        .separator { font-size: clamp(1.8rem, 12vw, 5rem); padding: 0 0.1em; animation: blink 1.5s infinite; }
+        @keyframes blink { 50% { opacity: 0.3; } }
+        
+        .milliseconds { 
+            font-size: clamp(1.2rem, 7.7vw, 2.5rem);
+            color: var(--accent-color); 
+            margin-top: 5px;
+            font-family: var(--font-family-display);
+        }
+
+        .timer-input-container { display: flex; gap: 10px; align-items: center; }
+        .timer-input {
+            width: clamp(70px, 18vw, 90px); padding: 10px; font-size: clamp(20px, 4vw, 24px);
+            font-family: var(--font-family-body); border: 1px solid var(--border-color);
+            background-color: var(--card-bg); color: var(--text-color); border-radius: 10px; text-align: center;
+        }
+        .controls { display: flex; gap: 20px; justify-content: center; }
+        .control-btn {
+            width: clamp(70px, 18vw, 90px); height: clamp(70px, 18vw, 90px); border-radius: 50%; border: none;
+            font-size: clamp(18px, 3vw, 22px); font-weight: 600; font-family: var(--font-family-body);
+            cursor: pointer; transition: all 0.3s var(--transition-spring);
+            box-shadow: 0 5px 20px var(--shadow-color-large);
+        }
+        .control-btn:active { transform: scale(0.9); box-shadow: 0 2px 10px var(--shadow-color-large); }
+        #start-stop-btn { background-color: var(--secondary-color); color: white; }
+        #start-stop-btn.running { background-color: var(--danger-color); }
+        #lap-reset-btn { background-color: var(--card-bg); color: var(--text-color); border: 2px solid var(--border-color); }
+        .laps-container { width: 100%; max-width: 400px; margin-top: 20px; }
+        .lap-item { display: flex; justify-content: space-between; padding: 12px 15px; font-size: clamp(16px, 2.5vw, 20px); border-bottom: 1px solid var(--border-color); font-family: var(--font-family-body); }
+        .lap-item:last-child { border-bottom: none; }
+        
+        /* ------------------- */
+        /* --- History View --- */
+        /* ------------------- */
+        .search-container { margin-bottom: 20px; }
+        #history-search { width: 100%; padding: 12px 15px; font-size: clamp(16px, 2.5vw, 20px); font-family: var(--font-family-body); border: 1px solid var(--border-color); border-radius: 12px; background-color: var(--card-bg); color: var(--text-color); box-shadow: 0 2px 5px var(--shadow-color); }
+        .history-list { list-style: none; }
+        .history-item-wrapper { position: relative; margin-bottom: 12px; overflow: hidden; border-radius: 12px; transition: all 0.3s ease; }
+        .history-item-wrapper.is-pinned { box-shadow: 0 0 0 2px var(--pin-color), 0 5px 15px var(--shadow-color-large); }
+        .history-item { background-color: var(--card-bg); box-shadow: 0 4px 15px var(--shadow-color-large); position: relative; touch-action: pan-y; transition: transform 0.4s ease; z-index: 2; border-radius: 12px; }
+        .history-item-content { padding: 15px; display: flex; flex-direction: column; background-color: var(--card-bg); border-radius: 12px; }
+        .history-item-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; gap: 10px; }
+        .history-item-label { font-weight: 600; font-size: clamp(20px, 3.5vw, 24px); word-break: break-word; margin-right: 10px; }
+        .is-pinned .history-item-label::before { content: '\f08d'; font-family: 'Font Awesome 6 Free'; font-weight: 900; color: var(--pin-color); margin-right: 10px; font-size: 0.8em; }
+        .history-item-duration { font-weight: 600; font-size: clamp(20px, 3.5vw, 24px); color: var(--primary-color); flex-shrink: 0; text-align: right; }
+        .history-item-times { font-size: clamp(12px, 2vw, 16px); opacity: 0.7; }
+        .history-item-footer { display: flex; justify-content: space-between; align-items: center; font-size: clamp(14px, 2.2vw, 18px); color: var(--text-color); opacity: 0.7; margin-top: 10px; }
+        .project-tag { background-color: var(--accent-color); color: white; padding: 2px 8px; border-radius: 8px; font-size: clamp(12px, 2vw, 16px); font-weight: 600; }
+        .swipe-actions { position: absolute; top: 0; right: 0; height: 100%; display: flex; align-items: center; z-index: 1; border-radius: 12px; }
+        .swipe-btn { height: 100%; width: clamp(70px, 18vw, 80px); border: none; color: white; font-weight: 600; font-size: clamp(20px, 4vw, 24px); display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; transition: background-color 0.2s ease; }
+        .swipe-btn span { font-size: 14px; margin-top: 4px; }
+        .pin-btn { background-color: var(--pin-color); }
+        .edit-btn { background-color: var(--accent-color); }
+        .delete-btn { background-color: var(--danger-color); }
+        .pin-btn:hover { background-color: #7b79f7; }
+        .edit-btn:hover { background-color: #ffb84d; }
+        .delete-btn:hover { background-color: #ff6b6b; }
+
+        /* ------------------- */
+        /* --- AI View --- */
+        /* ------------------- */
+        .ai-container { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+        .ai-chat-log { flex-grow: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 15px; -webkit-overflow-scrolling: touch; }
+        .ai-message, .user-message { padding: 12px 18px; border-radius: 20px; max-width: 85%; word-wrap: break-word; font-size: clamp(16px, 2.5vw, 20px); animation: messageFadeIn 0.8s var(--transition-spring); box-shadow: 0 4px 15px var(--shadow-color); }
+        @keyframes messageFadeIn { from { opacity: 0; transform: translateY(15px) scale(0.95); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        .user-message { background: var(--primary-gradient); color: white; align-self: flex-end; border-bottom-right-radius: 5px; }
+        .ai-message { background-color: var(--card-bg); color: var(--text-color); border: 1px solid var(--border-color); align-self: flex-start; border-bottom-left-radius: 5px; }
+        .ai-message h3 { font-family: var(--font-family-display); margin-bottom: 10px; }
+        .ai-message ul { list-style-position: inside; padding-left: 5px; }
+        .ai-message li { margin-bottom: 5px; }
+        .ai-message .data-actions button { margin-right: 10px; margin-top: 10px; padding: 8px 15px; border-radius: 10px; border: none; cursor: pointer; font-family: var(--font-family-body); font-weight: 600; font-size: 1em; background: var(--primary-gradient); color: white; transition: transform 0.2s ease; }
+        .ai-message .data-actions button:active { transform: scale(0.95); }
+        .today-view { border: 1px solid var(--border-color); border-left: 5px solid var(--primary-color); padding: 15px; background-color: var(--bg-color); border-radius: 12px; box-shadow: 0 4px 10px var(--shadow-color); }
+        .today-view .greeting { font-family: var(--font-family-display); font-size: 1.2em; margin-bottom: 15px; }
+        .goal-progress-item { margin-bottom: 12px; }
+        .goal-progress-item label { display: block; font-weight: 600; margin-bottom: 4px; }
+        .progress-bar-bg { width: 100%; height: 12px; background-color: var(--border-color); border-radius: 6px; overflow: hidden; box-shadow: inset 0 2px 5px rgba(0,0,0,0.1); }
+        .progress-bar-fg { height: 100%; width: 0%; background: var(--primary-gradient); border-radius: 6px; transition: width 1s var(--transition-spring); }
+        .goal-progress-item .meta { font-size: 0.8em; display: flex; justify-content: space-between; opacity: 0.8; margin-top: 4px; }
+        .stat-of-the-day { margin-top: 15px; padding-top: 10px; border-top: 1px dashed var(--border-color); font-size: 0.9em; opacity: 0.9; }
+        
+        .ai-suggestions { 
+            display: flex; gap: 12px; 
+            overflow-x: auto; flex-wrap: nowrap; 
+            -ms-overflow-style: none; scrollbar-width: none; 
+            padding: 10px 0; margin-top: 5px; 
+            scroll-snap-type: x mandatory;
+            margin-left: -10px; margin-right: -15px;
+            padding-left: 15px; padding-right: 15px;
+        }
+        .ai-suggestions::-webkit-scrollbar { display: none; }
+        .suggestion-btn { flex-shrink: 0; padding: 10px 18px; font-size: clamp(15px, 2.3vw, 18px); font-family: var(--font-family-body); font-weight: 500; border-radius: 18px; border: 1.5px solid var(--border-color); background-color: var(--card-bg); color: var(--text-color); cursor: pointer; transition: all 0.3s var(--transition-spring); box-shadow: 0 2px 5px var(--shadow-color); scroll-snap-align: start; }
+        html.dark .suggestion-btn { background-color: transparent; color: var(--text-color); }
+        .suggestion-btn:hover, .suggestion-btn:focus { background-color: var(--primary-color); color: white; transform: translateY(-3px) scale(1.05); box-shadow: 0 4px 20px rgba(0, 122, 255, 0.4); border-color: var(--primary-color); }
+        html.dark .suggestion-btn:hover, html.dark .suggestion-btn:focus { box-shadow: 0 0 25px rgba(10, 132, 255, 0.6); border-color: var(--primary-color); }
+        
+        .ai-input-area {
+            flex-shrink: 0;
+            padding-bottom: 10px;
+        }
+        .ai-command-container { display: flex; gap: 10px; padding-top: 10px; border-top: 1px solid var(--border-color); }
+        #ai-command-bar { flex-grow: 1; padding: 12px 15px; font-size: clamp(16px, 2.5vw, 20px); font-family: var(--font-family-body); border: 1px solid var(--border-color); border-radius: 12px; background-color: var(--card-bg); color: var(--text-color); box-shadow: 0 2px 5px var(--shadow-color); }
+        
+        #voice-input-btn {
+            padding: 0 15px; border: none; background: var(--card-bg); border: 1px solid var(--border-color); color: var(--text-color);
+            font-size: clamp(18px, 3vw, 22px); border-radius: 12px; cursor: pointer;
+            transition: all 0.3s var(--transition-spring); box-shadow: 0 2px 5px var(--shadow-color);
+        }
+        #voice-input-btn.listening {
+            background: var(--danger-color); color: white;
+            border-color: var(--danger-color);
+            animation: pulse-mic 1.5s infinite ease-in-out;
+        }
+        @keyframes pulse-mic {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.4); }
+            50% { transform: scale(1.05); box-shadow: 0 0 10px 5px rgba(255, 59, 48, 0.4); }
+        }
+
+        #ai-command-submit { padding: 0 20px; border: none; background: var(--primary-gradient); color: white; font-weight: 600; font-family: var(--font-family-body); font-size: clamp(16px, 2.5vw, 20px); border-radius: 12px; cursor: pointer; transition: transform 0.2s ease; box-shadow: 0 2px 5px var(--shadow-color-large); }
+        #ai-command-submit:active { transform: scale(0.95); }
+        
+        /* ------------------- */
+        /* --- Modals & Toasts --- */
+        /* ------------------- */
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.6); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); z-index: 2000; display: flex; justify-content: center; align-items: center; opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0.4s ease; }
+        .modal-overlay.visible { opacity: 1; visibility: visible; }
+        .modal-content { background-color: var(--card-bg); padding: 30px; border-radius: 20px; width: 90%; max-width: 400px; transform: scale(0.9) translateY(20px); opacity: 0; transition: transform 0.5s var(--transition-spring), opacity 0.4s ease; box-shadow: 0 10px 30px var(--shadow-color-large); }
+        .modal-overlay.visible .modal-content { transform: scale(1) translateY(0); opacity: 1; }
+        .modal-content h2 { font-family: var(--font-family-display); margin-bottom: 20px; font-size: clamp(22px, 4vw, 26px); }
+        .modal-content p { margin-bottom: 25px; font-size: clamp(16px, 2.5vw, 20px); opacity: 0.8; }
+        .modal-input { width: 100%; padding: 12px; font-size: clamp(16px, 2.5vw, 20px); font-family: var(--font-family-body); border: 1px solid var(--border-color); border-radius: 10px; margin-bottom: 15px; background-color: var(--bg-color); color: var(--text-color); box-shadow: inset 0 1px 3px var(--shadow-color); }
+        .modal-label { font-size: clamp(14px, 2.2vw, 18px); font-weight: 600; margin-bottom: 5px; display: block; }
+        .project-input-container { display: flex; gap: 10px; margin-bottom: 20px; }
+        #project-select { flex-grow: 1; }
+        #new-project-input { flex-grow: 2; }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+        .modal-btn { padding: 10px 20px; border-radius: 10px; border: none; font-weight: 600; font-family: var(--font-family-body); font-size: clamp(16px, 2.5vw, 20px); cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease; box-shadow: 0 2px 5px var(--shadow-color-large); }
+        .modal-btn:active { transform: scale(0.95); }
+        .primary-btn { background: var(--primary-gradient); color: white; }
+        .secondary-btn { background-color: var(--border-color); color: var(--text-color); }
+        .danger-btn { background-color: var(--danger-color); color: white; }
+        
+        .toast-notification { position: fixed; bottom: calc(env(safe-area-inset-bottom) + 80px); left: 50%; transform: translateX(-50%); background-color: #2c2c2e; color: white; padding: 12px 20px; border-radius: 25px; z-index: 3000; font-size: clamp(14px, 2.2vw, 18px); font-weight: 500; font-family: var(--font-family-body); opacity: 0; visibility: hidden; transition: opacity 0.4s ease, transform 0.4s ease, visibility 0.4s ease; box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
+        .toast-notification.show { opacity: 1; visibility: visible; transform: translate(-50%, -10px); }
+
+        .confetti { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 9999; }
+        .confetti-piece { position: absolute; width: 8px; height: 16px; background: #f00; opacity: 0; animation: confetti-fall 4s linear infinite; }
+        @keyframes confetti-fall { 0% { transform: translateY(-10vh) rotateZ(0deg); opacity: 1; } 100% { transform: translateY(110vh) rotateZ(720deg); opacity: 0; } }
+
+        @media (min-width: 768px) { .view { max-width: 700px; } .ai-suggestions { margin-inline: 0; padding-inline: 0; } }
+    </style>
+</head>
+<body>
+    <div id="app-container">
+        <header class="app-header">
+            <h1>ChronoMind</h1>
+            <label class="theme-toggle-switch">
+                <input type="checkbox" id="theme-toggle-checkbox">
+                <span class="slider"></span>
+            </label>
+        </header>
+
+        <main>
+            <div id="timer-view" class="view active">
+                <div class="timer-container">
+                    <div class="mode-switcher">
+                        <button id="stopwatch-mode-btn" class="mode-btn active">Stopwatch</button>
+                        <button id="timer-mode-btn" class="mode-btn">Timer</button>
+                    </div>
+                    <div class="timer-display-wrapper" id="timer-display-wrapper">
+                        <div class="timer-display">
+                            <div class="digit-group" id="hours-group"></div>
+                            <span class="separator">:</span>
+                            <div class="digit-group" id="minutes-group"></div>
+                            <span class="separator">:</span>
+                            <div class="digit-group" id="seconds-group"></div>
+                        </div>
+                        <span class="milliseconds" id="ms-display">.000</span>
+                    </div>
+                    <div id="timer-input-wrapper" class="timer-input-container" style="display: none;">
+                        <input type="number" id="hours-input" class="timer-input" placeholder="HH" min="0">
+                        <span>:</span>
+                        <input type="number" id="minutes-input" class="timer-input" placeholder="MM" min="0" max="59">
+                        <span>:</span>
+                        <input type="number" id="seconds-input" class="timer-input" placeholder="SS" min="0" max="59">
+                    </div>
+                    <div class="controls">
+                        <button id="lap-reset-btn" class="control-btn">Lap</button>
+                        <button id="start-stop-btn" class="control-btn">Start</button>
+                    </div>
+                </div>
+                <div id="laps-container" class="laps-container"></div>
+            </div>
+            <div id="history-view" class="view">
+                <div class="search-container">
+                    <input type="search" id="history-search" placeholder="Search sessions by label or project...">
+                </div>
+                <ul class="history-list" id="history-list"></ul>
+            </div>
+            <div id="ai-view" class="view">
+                <div class="ai-container">
+                    <div class="ai-chat-log" id="ai-chat-log"></div>
+                    <div class="ai-input-area">
+                        <div class="ai-suggestions" id="ai-suggestions"></div>
+                        <div class="ai-command-container">
+                            <input type="text" id="ai-command-bar" placeholder="Message ChronoMind AI...">
+                            <button id="voice-input-btn"><i class="fa-solid fa-microphone"></i></button>
+                            <button id="ai-command-submit"><i class="fa-solid fa-arrow-up"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <nav class="app-nav">
+            <button class="nav-btn active" data-view="timer-view"><span class="icon"><i class="fa-solid fa-stopwatch-20"></i></span><span>Timer</span></button>
+            <button class="nav-btn" data-view="history-view"><span class="icon"><i class="fa-solid fa-scroll"></i></span><span>History</span></button>
+            <button class="nav-btn" data-view="ai-view"><span class="icon"><i class="fa-solid fa-brain"></i></span><span>AI</span></button>
+        </nav>
+    </div>
+
+    <!-- Modals and Overlays -->
+    <div id="session-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h2 id="modal-title"><i class="fa-solid fa-pen-to-square"></i> Edit Session</h2>
+            <label for="session-label-input" class="modal-label">Session Label</label>
+            <input type="text" id="session-label-input" class="modal-input" placeholder="e.g., Morning Run">
+            <label for="project-select" class="modal-label">Project</label>
+            <div class="project-input-container">
+                 <select id="project-select" class="modal-input"><option value="">None</option></select>
+                <input type="text" id="new-project-input" class="modal-input" placeholder="Or create new...">
+            </div>
+            <div class="modal-actions">
+                <button id="delete-session-btn" class="modal-btn danger-btn" style="display: none; margin-right: auto;">Delete</button>
+                <button id="cancel-session-btn" class="modal-btn secondary-btn">Cancel</button>
+                <button id="save-session-btn" class="modal-btn primary-btn">Save</button>
+            </div>
+        </div>
+    </div>
+    <div id="confirmation-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h2 id="confirmation-title"><i class="fa-solid fa-triangle-exclamation"></i> Are you sure?</h2>
+            <p id="confirmation-message">This action cannot be undone.</p>
+            <div class="modal-actions">
+                <button id="confirmation-cancel-btn" class="modal-btn secondary-btn">Cancel</button>
+                <button id="confirmation-confirm-btn" class="modal-btn danger-btn">Confirm</button>
+            </div>
+        </div>
+    </div>
+    <div id="toast-notification" class="toast-notification"></div>
+    <div id="confetti-container" class="confetti"></div>
+    <input type="file" id="import-file-input" style="display: none;" accept="application/json">
+
+    <script type="module">
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/ChronoMind/sw.js')
+                    .then(registration => console.log('Service Worker registered with scope:', registration.scope))
+                    .catch(error => console.error('Service Worker registration failed:', error));
+            });
+        }
+        
+        const Utils = { formatTime(ms, showMilliseconds = true, showMsSeparator = true) { if (ms < 0) ms = 0; const totalSeconds = Math.floor(ms / 1000); const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0'); const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0'); const seconds = String(totalSeconds % 60).padStart(2, '0'); if (showMilliseconds) { const milliseconds = String(ms % 1000).padStart(3, '0'); return { full: `${hours}:${minutes}:${seconds}`, ms: `${showMsSeparator ? '.' : ''}${milliseconds}`, parts: {hours, minutes, seconds} }; } return { full: `${hours}:${minutes}:${seconds}`, ms: '', parts: {hours, minutes, seconds} }; }, formatDateTime(isoString) { if (!isoString) return ''; const date = new Date(isoString); return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }, generateUUID() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => (c === 'x' ? (Math.random() * 16 | 0) : ((Math.random() * 16 | 0) & 0x3 | 0x8)).toString(16)); }, debounce(func, delay) { let timeout; return (...args) => { clearTimeout(timeout); timeout = setTimeout(() => func.apply(this, args), delay); }; }, parseTimeToMs(timeString) { const timeRegex = /(?:(\d+)\s*(?:h|hour(?:s)?))?\s*(?:(\d+)\s*(?:m|min(?:ute)?(?:s)?))?\s*(?:(\d+)\s*(?:s|sec(?:ond)?(?:s)?))?/; const match = timeString.toLowerCase().match(timeRegex); if (!match) return 0; const [, hours, minutes, seconds] = match.map(v => parseInt(v) || 0); return (hours * 3600 + minutes * 60 + seconds) * 1000; }, getPeriodDateRange(period) { const now = new Date(); let startDate, endDate; switch (period) { case 'today': startDate = new Date(now.setHours(0, 0, 0, 0)); endDate = new Date(new Date().setHours(23, 59, 59, 999)); break; case 'yesterday': startDate = new Date(new Date().setDate(now.getDate() - 1)); startDate.setHours(0, 0, 0, 0); endDate = new Date(startDate); endDate.setHours(23, 59, 59, 999); break; case 'this week': const dayOfWeek = now.getDay(); startDate = new Date(new Date().setDate(now.getDate() - dayOfWeek)); startDate.setHours(0, 0, 0, 0); endDate = new Date(); break; case 'last week': const lastWeekStart = new Date(new Date().setDate(now.getDate() - now.getDay() - 7)); startDate = new Date(lastWeekStart.setHours(0, 0, 0, 0)); const lastWeekEnd = new Date(lastWeekStart); endDate = new Date(lastWeekEnd.setDate(lastWeekStart.getDate() + 6)); endDate.setHours(23, 59, 59, 999); break; case 'this month': startDate = new Date(now.getFullYear(), now.getMonth(), 1); startDate.setHours(0, 0, 0, 0); endDate = new Date(); break; case 'last month': startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1); startDate.setHours(0, 0, 0, 0); endDate = new Date(now.getFullYear(), now.getMonth(), 0); endDate.setHours(23, 59, 59, 999); break; case 'this year': startDate = new Date(now.getFullYear(), 0, 1); startDate.setHours(0, 0, 0, 0); endDate = new Date(); break; case 'last year': startDate = new Date(now.getFullYear() - 1, 0, 1); startDate.setHours(0, 0, 0, 0); endDate = new Date(now.getFullYear() - 1, 11, 31); endDate.setHours(23, 59, 59, 999); break; default: return null; } return { startDate, endDate }; } };
+        const SoundEngine = { audioContext: null, init() { this.audioContext = new (window.AudioContext || window.webkitAudioContext)(); }, playNotification() { if (!this.audioContext) this.init(); const oscillator = this.audioContext.createOscillator(); const gainNode = this.audioContext.createGain(); oscillator.connect(gainNode); gainNode.connect(this.audioContext.destination); gainNode.gain.setValueAtTime(0, this.audioContext.currentTime); gainNode.gain.linearRampToValueAtTime(0.5, this.audioContext.currentTime + 0.05); oscillator.frequency.setValueAtTime(880, this.audioContext.currentTime); oscillator.type = 'sine'; oscillator.start(this.audioContext.currentTime); oscillator.stop(this.audioContext.currentTime + 0.2); gainNode.gain.exponentialRampToValueAtTime(0.00001, this.audioContext.currentTime + 0.2); } };
+        const Store = { _state: { theme: 'light', history: [], projects: [], goals: {}, userStats: { lastAiWelcome: null, userName: null, commonDurations: {}, commonProjects: {}, peakHour: null, productiveDay: null } }, init() { const savedState = localStorage.getItem('chronoMindState'); if (savedState) { const parsedState = JSON.parse(savedState); this._state = { ...this._state, ...parsedState, userStats: { ...this._state.userStats, ...(parsedState.userStats || {}) } }; } this._state.history.sort((a, b) => (b.isPinned - a.isPinned) || (new Date(b.timestamp) - new Date(a.timestamp))); this.save(false); }, getState() { return this._state; }, getHistory() { return this._state.history; }, getProjects() { return this._state.projects; }, getGoals() { return this._state.goals; }, addHistory(session) { this._state.history.unshift(session); this._state.history.sort((a, b) => (b.isPinned - a.isPinned) || (new Date(b.timestamp) - new Date(a.timestamp))); this.save(); }, updateHistory(id, newLabel, newProjectId) { const session = this._state.history.find(s => s.id === id); if (session) { session.label = newLabel; session.projectId = newProjectId; this.save(); } }, deleteHistory(id) { this._state.history = this._state.history.filter(s => s.id !== id); this.save(); }, togglePin(id) { const session = this._state.history.find(s => s.id === id); if (session) { session.isPinned = !session.isPinned; this._state.history.sort((a, b) => (b.isPinned - a.isPinned) || (new Date(b.timestamp) - new Date(a.timestamp))); this.save(); } }, addProject(projectName) { const existingProject = this._state.projects.find(p => p.name.toLowerCase() === projectName.toLowerCase()); if (existingProject) return existingProject; const newProject = { id: Utils.generateUUID(), name: projectName }; this._state.projects.push(newProject); this.save(); return newProject; }, removeProject(projectId) { this._state.projects = this._state.projects.filter(p => p.id !== projectId); this._state.history.forEach(s => { if (s.projectId === projectId) s.projectId = null; }); delete this._state.goals[projectId]; this.save(); }, setGoal(projectId, frequency, duration) { this._state.goals[projectId] = { frequency, duration }; this.save(); }, removeGoal(projectId) { delete this._state.goals[projectId]; this.save(); }, setTheme(theme) { this._state.theme = theme; this.save(); }, updateUserStat(key, value) { this._state.userStats[key] = value; this.save(); }, replaceState(newState) { this._state = { theme: newState.theme || 'light', history: newState.history || [], projects: newState.projects || [], goals: newState.goals || {}, userStats: { lastAiWelcome: null, userName: null, commonDurations: {}, commonProjects: {}, peakHour: null, productiveDay: null, ...(newState.userStats || {}) }, }; this._state.history.sort((a, b) => (b.isPinned - a.isPinned) || (new Date(b.timestamp) - new Date(a.timestamp))); this.save(); }, resetAllData() { this._state = { theme: this._state.theme, history: [], projects: [], goals: {}, userStats: { lastAiWelcome: null, userName: null, commonDurations: {}, commonProjects: {}, peakHour: null, productiveDay: null } }; this.save(); }, save(dispatchEvent = true) { localStorage.setItem('chronoMindState', JSON.stringify(this._state)); if (dispatchEvent) window.dispatchEvent(new CustomEvent('chronoMindStorageUpdated', { detail: { state: this._state }})); }, };
+        const ConfirmationModal = { init() { this._modal = document.getElementById('confirmation-modal'); this._title = document.getElementById('confirmation-title'); this._message = document.getElementById('confirmation-message'); this._confirmBtn = document.getElementById('confirmation-confirm-btn'); this._cancelBtn = document.getElementById('confirmation-cancel-btn'); this._confirmBtn.addEventListener('click', () => this.confirm()); this._cancelBtn.addEventListener('click', () => this.cancel()); this._modal.addEventListener('click', (e) => { if (e.target === this._modal) this.cancel(); }); }, show(message = "Are you sure?", title = "Confirm Action") { this._title.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> ${title}`; this._message.textContent = message; this._modal.classList.add('visible'); return new Promise((resolve, reject) => { this._resolvePromise = resolve; this._rejectPromise = reject; }); }, hide() { this._modal.classList.remove('visible'); }, confirm() { if (this._resolvePromise) this._resolvePromise(); this.hide(); }, cancel() { if (this._rejectPromise) this._rejectPromise(new Error('User cancelled the action.')); this.hide(); } };
+        const AI = { processCommand(command) { command = command.toLowerCase().trim(); let match; match = command.match(/my name is (.+)/); if (match) return { intent: 'set_name', name: match[1].trim() }; match = command.match(/what do you know about me|summarize my habits/); if (match) return { intent: 'summarize_habits' }; match = command.match(/(?:show (?:me )?)?(?:my )?(summary|stats|insights)/); if (match) return { intent: 'get_summary' }; match = command.match(/compare this week vs last week/); if (match) return { intent: 'compare_weeks' }; match = command.match(/^(what is|what's|how many|how much)/); if (match) { if (command.includes('average session length')) return { intent: 'get_insight', insight: 'average' }; if (command.includes('productive day')) return { intent: 'get_insight', insight: 'productive_day' }; if (command.includes('most active project')) return { intent: 'get_insight', insight: 'active_project' }; if (command.includes('total time tracked')) return { intent: 'get_insight', insight: 'total_time' }; if (command.includes('time on') && command.includes('for') || command.includes('project')) { match = command.match(/(?:time on|time for|how much time on|how much time for) (.+?)(?: (last|this) (day|week|month|year))?/); if (match) return { intent: 'get_project_time_period', projectName: match[1].trim(), period: match[2] ? `${match[2]} ${match[3]}` : null }; } } match = command.match(/^start (?:a )?(?:(stopwatch|timer) )?(?:for )?(.+?)(?: on| for (.+))?$/); if (match) { let [, type, timeOrProject, , project] = match; let activityName = timeOrProject; project = project || null; const duration = Utils.parseTimeToMs(activityName); if (duration > 0) return { intent: 'start_timer', duration, project }; if (type === 'stopwatch' || (activityName && Utils.parseTimeToMs(activityName) === 0 && !activityName.match(/(h|min|s)/i))) { return { intent: 'start_stopwatch', project: activityName || null }; } if (command === 'start stopwatch') return { intent: 'start_stopwatch', project: null }; return { intent: 'unknown' }; } match = command.match(/set (?:a )?(daily|weekly|monthly)?(?: )?goal of (.+?) for (.+)/); if(match) { const [, frequency = 'daily', time, projectName] = match; const duration = Utils.parseTimeToMs(time); if(duration > 0) return { intent: 'set_goal', frequency, duration, projectName }; } match = command.match(/show (?:my )?goals/); if (match) return { intent: 'list_goals' }; match = command.match(/remove goal for (.+)/); if (match) return { intent: 'remove_goal', projectName: match[1].trim() }; match = command.match(/update (daily|weekly|monthly)?(?: )?goal of (.+?) for (.+)/); if(match) { const [, frequency = 'daily', time, projectName] = match; const duration = Utils.parseTimeToMs(time); if(duration > 0) return { intent: 'update_goal', frequency, duration, projectName }; } match = command.match(/show (?:me )?(?:my )?(.+)/); if (match) { const query = match[1]; if (query.includes('progress') || query.includes('today')) return { intent: 'show_progress_today' }; if (query.includes('sessions from') || query.includes('history from')) { match = query.match(/(?:sessions from|history from) (last|this) (day|week|month|year|today|yesterday)/); if (match) return { intent: 'filter_history_period', period: `${match[1]} ${match[2]}`.trim() }; } if (query.includes('last month') || query.includes('this month') || query.includes('last year') || query.includes('this year')) { return { intent: 'filter_history_period', period: query }; } if (query.includes('yesterday')) return { intent: 'filter_history_period', period: 'yesterday' }; return { intent: 'filter_history', filter: query }; } match = command.match(/delete (?:my )?(last|latest) session/); if(match) return { intent: 'delete_last_session' }; match = command.match(/rename (last|latest) session to (.+)/); if (match) return { intent: 'rename_last_session', newLabel: match[2].trim() }; match = command.match(/change project for (last|latest) session to (.+)/); if (match) return { intent: 'change_project_last_session', newProjectName: match[2].trim() }; if (command.includes('export my data')) return { intent: 'export_data' }; if (command.includes('import data')) return { intent: 'import_data' }; if (command.includes('reset all my data')) return { intent: 'reset_all_data' }; match = command.match(/suggest a (task|break|goal)/); if(match) return { intent: 'suggest', type: match[1] }; return { intent: 'unknown' }; }, analyzeHistory(history, projects, goals) { if (!history || history.length === 0) return { summary: "No sessions recorded yet. Start a timer to begin!", insights: [], chartData: null, goalProgress: [], statOfTheDay: "Let's get started!", peakHour: null, productiveDay: null, avgSessionDuration: 0 }; const totalSessions = history.length; const totalTimeMs = history.reduce((sum, s) => sum + s.duration, 0); const avgTimeMs = totalTimeMs / totalSessions; const summary = `You've completed <strong>${totalSessions}</strong> sessions, totaling <strong>${Utils.formatTime(totalTimeMs, false).full}</strong>. Avg. session: <strong>${Utils.formatTime(avgTimeMs, false).full}</strong>.`; const insights = []; const sessionsByDay = history.reduce((acc, s) => { const day = new Date(s.timestamp).toLocaleDateString('en-US', { weekday: 'long' }); acc[day] = (acc[day] || 0) + s.duration; return acc; }, {}); const productiveDay = Object.keys(sessionsByDay).sort((a,b) => sessionsByDay[b] - sessionsByDay[a])[0]; if(productiveDay) insights.push(`Your most productive day is <strong>${productiveDay}</strong>.`); const timeByProject = history.reduce((acc, s) => { if (s.projectId) acc[s.projectId] = (acc[s.projectId] || 0) + s.duration; return acc; }, {}); const mostActiveProjectId = Object.keys(timeByProject).sort((a,b) => timeByProject[b] - timeByProject[a])[0]; if (mostActiveProjectId) { const projectName = projects.find(p => p.id === mostActiveProjectId)?.name || 'Unknown'; insights.push(`Your most active project is <strong>${projectName}</strong>.`); } const sessionsByHour = history.reduce((acc, s) => { const hour = new Date(s.timestamp).getHours(); acc[hour] = (acc[hour] || 0) + s.duration; return acc; }, {}); const peakHour = Object.keys(sessionsByHour).sort((a,b) => sessionsByHour[b] - sessionsByHour[a])[0]; if(peakHour) { const ampm = peakHour >= 12 ? 'PM' : 'AM'; const displayHour = peakHour % 12 || 12; insights.push(`You're most active around <strong>${displayHour} ${ampm}</strong>.`); } const statOfTheDay = insights[Math.floor(Math.random() * insights.length)] || "Keep up the great work!"; const goalProgress = []; const now = new Date(); for(const projectId in goals) { const goal = goals[projectId]; const project = projects.find(p => p.id === projectId); if (!project) continue; let startOfPeriod; if(goal.frequency === 'daily') startOfPeriod = new Date().setHours(0,0,0,0); else if (goal.frequency === 'weekly') { const dayOfWeek = now.getDay(); const firstDayOfWeek = new Date(new Date().setDate(now.getDate() - dayOfWeek)); startOfPeriod = firstDayOfWeek.setHours(0,0,0,0); } else startOfPeriod = new Date(now.getFullYear(), now.getMonth(), 1).setHours(0,0,0,0); const timeInPeriod = history.filter(s => s.projectId === projectId && new Date(s.timestamp) >= startOfPeriod).reduce((sum, s) => sum + s.duration, 0); goalProgress.push({ projectName: project.name, frequency: goal.frequency, timeTracked: timeInPeriod, goalDuration: goal.duration, percentage: Math.min(100, (timeInPeriod / goal.duration) * 100) }); } const last7DaysData = {}; for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); const key = d.toLocaleDateString('en-CA'); last7DaysData[key] = 0; } history.forEach(session => { const sessionDate = new Date(session.timestamp).toLocaleDateString('en-CA'); if(last7DaysData.hasOwnProperty(sessionDate)) last7DaysData[sessionDate] += session.duration / 60000; }); const chartData = { type: 'bar', labels: Object.keys(last7DaysData).map(d => new Date(d).toLocaleDateString('en-US', { weekday: 'short' })), datasets: [{ label: 'Minutes per Day', data: Object.values(last7DaysData), backgroundColor: 'rgba(10, 132, 255, 0.6)', borderColor: 'rgba(10, 132, 255, 1)', borderWidth: 1, borderRadius: 5 }] }; return { summary, insights, chartData, goalProgress, statOfTheDay, peakHour, productiveDay, avgSessionDuration: avgTimeMs }; }, compareWeeks(history) { const now = new Date(); const today = now.getDay(); const endOfThisWeek = new Date(); endOfThisWeek.setHours(23,59,59,999); const startOfThisWeek = new Date(); startOfThisWeek.setDate(now.getDate() - today); startOfThisWeek.setHours(0,0,0,0); const startOfLastWeek = new Date(startOfThisWeek); startOfLastWeek.setDate(startOfThisWeek.getDate() - 7); const endOfLastWeek = new Date(startOfThisWeek); endOfLastWeek.setDate(startOfThisWeek.getDate() - 1); endOfLastWeek.setHours(23,59,59,999); const thisWeekTime = history.filter(s => new Date(s.timestamp) >= startOfThisWeek && new Date(s.timestamp) <= endOfThisWeek).reduce((sum, s) => sum + s.duration, 0); const lastWeekTime = history.filter(s => new Date(s.timestamp) >= startOfLastWeek && new Date(s.timestamp) <= endOfLastWeek).reduce((sum, s) => sum + s.duration, 0); const difference = thisWeekTime - lastWeekTime; const percentageChange = lastWeekTime > 0 ? (difference / lastWeekTime) * 100 : (thisWeekTime > 0 ? 100 : 0); let analysis = `This week so far: <strong>${Utils.formatTime(thisWeekTime, false).full}</strong>.<br>Last week total: <strong>${Utils.formatTime(lastWeekTime, false).full}</strong>.<br>`; if (difference > 0) analysis += `You're up by <strong>${Utils.formatTime(difference, false).full}</strong> (+${percentageChange.toFixed(0)}%)! Fantastic work!`; else if (difference < 0) analysis += `You're down by <strong>${Utils.formatTime(Math.abs(difference), false).full}</strong> (${percentageChange.toFixed(0)}%). Let's pick up the pace!`; else analysis += "You're on the same pace as last week. Keep it consistent!"; return analysis; }, getSessionsForPeriod(history, period, projectId = null) { const range = Utils.getPeriodDateRange(period); if (!range) return []; return history.filter(s => { const sessionDate = new Date(s.timestamp); const inDateRange = sessionDate >= range.startDate && sessionDate <= range.endDate; const inProject = projectId ? s.projectId === projectId : true; return inDateRange && inProject; }); }, getProjectByName(projects, name) { return projects.find(p => p.name.toLowerCase() === name.toLowerCase()); }, listGoals(goals, projects) { if (Object.keys(goals).length === 0) return "You haven't set any goals yet. Try 'Set a daily goal of 1 hour for work'."; let html = "<h3><i class='fa-solid fa-bullseye'></i> Your Current Goals:</h3><ul>"; for (const projectId in goals) { const goal = goals[projectId]; const project = projects.find(p => p.id === projectId); if (project) { html += `<li><strong>${project.name}</strong>: ${Utils.formatTime(goal.duration, false).full} ${goal.frequency}.</li>`; } } html += "</ul>"; return html; }, generateSuggestions(state) { const suggestions = new Set(); const { userStats } = state; if (Object.keys(userStats.commonDurations).length > 0) { const mostCommonDurationMs = parseInt(Object.keys(userStats.commonDurations).sort((a,b) => userStats.commonDurations[b] - userStats.commonDurations[a])[0]) * 60000; if (mostCommonDurationMs > 0) suggestions.add(`Start a ${Utils.formatTime(mostCommonDurationMs, false).full} timer`); } else { suggestions.add('Start a 15 min timer'); } if (Object.keys(userStats.commonProjects).length > 0) { const mostCommonProjectId = Object.keys(userStats.commonProjects).sort((a,b) => userStats.commonProjects[b] - userStats.commonProjects[a])[0]; const projectName = state.projects.find(p => p.id === mostCommonProjectId)?.name; if (projectName) suggestions.add(`Start stopwatch for ${projectName}`); } suggestions.add('Show my summary'); suggestions.add('Show my goals'); suggestions.add('Compare this week vs last week'); suggestions.add("What's my goal progress?"); suggestions.add("Show sessions from yesterday"); suggestions.add("Suggest a task"); return Array.from(suggestions).slice(0, 5); }, generateTodayView(state) { const hour = new Date().getHours(); const userName = state.userStats.userName; let greeting = userName ? `, ${userName}` : "!"; if (hour < 12) greeting = "Good morning" + greeting; else if (hour < 18) greeting = "Good afternoon" + greeting; else greeting = "Good evening" + greeting; const { goalProgress, statOfTheDay } = this.analyzeHistory(state.history, state.projects, state.goals); let goalHtml = "<h3><i class='fa-solid fa-bullseye'></i> Goal Progress</h3>"; if (goalProgress.length > 0) goalHtml += goalProgress.map(p => `<div class="goal-progress-item"><label>${p.projectName} (${p.frequency})</label><div class="progress-bar-bg"><div class="progress-bar-fg" style="width: 0%;" data-percent="${p.percentage.toFixed(0)}"></div></div><div class="meta"><span>${Utils.formatTime(p.timeTracked, false).full} / ${Utils.formatTime(p.goalDuration, false).full}</span><span>${p.percentage.toFixed(0)}%</span></div></div>`).join(''); else goalHtml += "<p style='opacity: 0.7; font-size: 0.9em;'>No goals set. Try 'Set a daily goal of 1 hour for work'.</p>"; return `<div class="today-view"><div class="greeting">${greeting} Here's your status for today.</div>${goalHtml}<div class="stat-of-the-day"><strong><i class='fa-solid fa-star'></i> Insight of the Day:</strong> ${statOfTheDay}</div></div>`; }, getMotivationalFeedback() { return ["Great session! Keep the momentum going.", "Excellent focus. That's how progress is made!", "Job well done. What's next?", "Another productive session in the books. Awesome!", "You're on fire! Keep it up."][Math.floor(Math.random() * 5)]; }, updateUserStat(state, session) { const { userStats } = state; if (session.projectId) userStats.commonProjects[session.projectId] = (userStats.commonProjects[session.projectId] || 0) + 1; const durationMinutes = Math.round(session.duration / 60000); if(durationMinutes > 0) userStats.commonDurations[durationMinutes] = (userStats.commonDurations[durationMinutes] || 0) + 1; const { peakHour, productiveDay } = this.analyzeHistory(state.history, state.projects, state.goals); userStats.peakHour = peakHour; userStats.productiveDay = productiveDay; } };
+        const NotificationManager = { isPermissionGranted: false, async requestPermission() { if (!("Notification" in window)) { console.log("This browser does not support notifications."); return; } if (Notification.permission === "granted") { this.isPermissionGranted = true; } else if (Notification.permission !== "denied") { const permission = await Notification.requestPermission(); this.isPermissionGranted = permission === "granted"; } }, };
+
+        class TimerEngine {
+            constructor(updateCallback, finishedCallback, openModalCallback) {
+                this.isRunning = false; this.mode = 'stopwatch';
+                this.laps = []; this.timerDuration = 0;
+                this.updateCallback = updateCallback;
+                this.finishedCallback = finishedCallback;
+                this.openModalCallback = openModalCallback;
+                this.pendingSession = null;
+                
+                navigator.serviceWorker.onmessage = (event) => {
+                    const { type, state, isFinished } = event.data;
+                    switch(type) {
+                        case 'tick':
+                        case 'state':
+                            this.syncState(state);
+                            break;
+                        case 'stopped':
+                            this.syncState(state);
+                            this.handleSessionStop(state, isFinished);
+                            break;
+                        case 'reset':
+                            this.syncState(state);
+                            this.laps = [];
+                            this.updateCallback(0);
+                            break;
+                    }
+                };
+                this.getStateFromSW();
+            }
+
+            postToSW(message) { if (navigator.serviceWorker.controller) { navigator.serviceWorker.controller.postMessage(message); } else { console.error("Service Worker is not active."); } }
+            getStateFromSW() { navigator.serviceWorker.ready.then(() => { this.postToSW({ command: 'getState' }); }); }
+
+            syncState(state) {
+                this.isRunning = state.isRunning;
+                this.mode = state.mode;
+                this.timerDuration = state.timerDuration;
+                this.updateCallback(state.displayTime);
+                document.title = this.isRunning ? `${Utils.formatTime(state.displayTime, false).full} - ChronoMind` : 'ChronoMind AI';
+            }
+
+            start() {
+                if (this.isRunning) return;
+                const data = { 
+                    mode: this.mode, 
+                    timerDuration: this.timerDuration,
+                    elapsedTime: 0,
+                    sessionStartTime: new Date().toISOString()
+                };
+                this.postToSW({ command: 'start', data });
+            }
+
+            stop() { if (!this.isRunning) return; this.postToSW({ command: 'stop' }); }
+
+            handleSessionStop(finalState, isFinished) {
+                const { elapsedTime, sessionStartTime } = finalState;
+                if (elapsedTime > 1000 && sessionStartTime) { 
+                    this.pendingSession = { 
+                        duration: elapsedTime, 
+                        type: this.mode, 
+                        laps: [...this.laps], 
+                        startTime: sessionStartTime, 
+                        finishTime: new Date().toISOString() 
+                    };
+                    this.openModalCallback();
+                } else {
+                    this.pendingSession = null;
+                }
+                if (isFinished) { this.finishedCallback(); }
+            }
+
+            lap() {
+                if (!this.isRunning || this.mode !== 'stopwatch') return;
+                navigator.serviceWorker.ready.then(reg => {
+                    reg.active.postMessage({command: 'getState'});
+                    const messageHandler = (event) => {
+                        if (event.data.type === 'state') {
+                            navigator.serviceWorker.removeEventListener('message', messageHandler);
+                            const currentElapsedTime = event.data.state.elapsedTime;
+                            const lapTime = this.laps.reduce((acc, lap) => acc + lap.time, 0);
+                            this.laps.unshift({ time: currentElapsedTime - lapTime });
+                            window.dispatchEvent(new Event('lapsUpdated'));
+                        }
+                    };
+                    navigator.serviceWorker.addEventListener('message', messageHandler);
+                });
+            }
+
+            reset() {
+                this.postToSW({ command: 'reset' });
+                this.laps = [];
+                this.pendingSession = null;
+            }
+
+            setTimer(duration) {
+                this.reset();
+                this.mode = 'timer';
+                this.timerDuration = duration;
+                this.updateCallback(duration);
+            }
+        }
+
+        class App {
+            constructor() {
+                this.timerEngine = new TimerEngine(
+                    this.updateTimeDisplay.bind(this), 
+                    this.handleTimerFinished.bind(this),
+                    () => this.openSessionModal('new')
+                );
+                this.currentView = 'timer-view'; this.editingSession = null; this.lastTimeParts = {}; this.speechRecognition = null; this.wakeLock = null;
+                
+                Store.init(); ConfirmationModal.init();
+                this.cacheDOMElements(); this.setupFlipDisplay(); this.bindEventListeners();
+                
+                this.applyTheme();
+                this.renderHistory();
+                this.initSpeechRecognition();
+            }
+
+            cacheDOMElements() { this.dom = { html: document.documentElement, themeToggleCheckbox: document.getElementById('theme-toggle-checkbox'), navBtns: document.querySelectorAll('.nav-btn'), views: document.querySelectorAll('.view'), hoursGroup: document.getElementById('hours-group'), minutesGroup: document.getElementById('minutes-group'), secondsGroup: document.getElementById('seconds-group'), msDisplay: document.getElementById('ms-display'), startStopBtn: document.getElementById('start-stop-btn'), lapResetBtn: document.getElementById('lap-reset-btn'), stopwatchModeBtn: document.getElementById('stopwatch-mode-btn'), timerModeBtn: document.getElementById('timer-mode-btn'), timerInputWrapper: document.getElementById('timer-input-wrapper'), hoursInput: document.getElementById('hours-input'), minutesInput: document.getElementById('minutes-input'), secondsInput: document.getElementById('seconds-input'), lapsContainer: document.getElementById('laps-container'), historyList: document.getElementById('history-list'), historySearch: document.getElementById('history-search'), sessionModal: document.getElementById('session-modal'), modalTitle: document.getElementById('modal-title'), sessionLabelInput: document.getElementById('session-label-input'), projectSelect: document.getElementById('project-select'), newProjectInput: document.getElementById('new-project-input'), saveSessionBtn: document.getElementById('save-session-btn'), cancelSessionBtn: document.getElementById('cancel-session-btn'), deleteSessionBtn: document.getElementById('delete-session-btn'), toast: document.getElementById('toast-notification'), aiCommandBar: document.getElementById('ai-command-bar'), aiCommandSubmit: document.getElementById('ai-command-submit'), aiChatLog: document.getElementById('ai-chat-log'), aiSuggestions: document.getElementById('ai-suggestions'), importFileInput: document.getElementById('import-file-input'), timerView: document.getElementById('timer-view'), timerDisplayWrapper: document.getElementById('timer-display-wrapper'), confettiContainer: document.getElementById('confetti-container'), voiceInputBtn: document.getElementById('voice-input-btn'), }; }
+            bindEventListeners() { window.addEventListener('lapsUpdated', () => this.updateLapsDisplay()); this.dom.themeToggleCheckbox.addEventListener('change', this.toggleTheme.bind(this)); this.dom.navBtns.forEach(btn => btn.addEventListener('click', () => this.switchView(btn.dataset.view))); this.dom.startStopBtn.addEventListener('click', this.handleStartStop.bind(this)); this.dom.lapResetBtn.addEventListener('click', this.handleLapReset.bind(this)); this.dom.stopwatchModeBtn.addEventListener('click', () => this.switchMode('stopwatch')); this.dom.timerModeBtn.addEventListener('click', () => this.switchMode('timer')); this.dom.historySearch.addEventListener('input', Utils.debounce(this.renderHistory.bind(this), 300)); this.dom.sessionModal.addEventListener('click', (e) => { if (e.target === this.dom.sessionModal) this.closeSessionModal(); }); this.dom.saveSessionBtn.addEventListener('click', this.handleSaveSession.bind(this)); this.dom.cancelSessionBtn.addEventListener('click', this.closeSessionModal.bind(this)); this.dom.deleteSessionBtn.addEventListener('click', this.handleDeleteSession.bind(this)); this.dom.aiCommandSubmit.addEventListener('click', this.handleAICommand.bind(this)); this.dom.aiCommandBar.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.handleAICommand(); }); this.dom.voiceInputBtn.addEventListener('click', this.handleVoiceInput.bind(this)); this.dom.importFileInput.addEventListener('change', this.handleImportData.bind(this)); window.addEventListener('chronoMindStorageUpdated', () => { Store.init(); this.applyTheme(); if (this.currentView === 'history-view') this.renderHistory(); if (this.currentView === 'ai-view') this.initAIView(); }); document.addEventListener('visibilitychange', this.handleVisibilityChange.bind(this)); this.bindGestureListeners(); }
+            bindGestureListeners() { let startY = 0; let endY = 0; this.dom.timerView.addEventListener('touchstart', e => { startY = e.touches[0].clientY; }, { passive: true }); this.dom.timerView.addEventListener('touchend', e => { endY = e.changedTouches[0].clientY; if (startY < endY && Math.abs(endY - startY) > 80 && !this.timerEngine.isRunning) { this.timerEngine.reset(); this.showToast("Timer Reset"); navigator.vibrate?.(20); } }, { passive: true }); }
+            async requestWakeLock() { if ('wakeLock' in navigator) { try { this.wakeLock = await navigator.wakeLock.request('screen'); this.wakeLock.addEventListener('release', () => console.log('Wake Lock released')); console.log('Wake Lock active'); } catch (err) { console.error(`${err.name}, ${err.message}`); } } }
+            async releaseWakeLock() { if (this.wakeLock) { await this.wakeLock.release(); this.wakeLock = null; } }
+            handleVisibilityChange() { if (this.wakeLock && document.visibilityState === 'hidden') { this.releaseWakeLock(); } else if (this.timerEngine.isRunning && document.visibilityState === 'visible') { this.requestWakeLock(); } }
+            toggleTheme() { const newTheme = this.dom.themeToggleCheckbox.checked ? 'dark' : 'light'; Store.setTheme(newTheme); this.applyTheme(); }
+            applyTheme() { const theme = Store.getState().theme; const isDark = theme === 'dark'; this.dom.html.classList.toggle('dark', isDark); this.dom.themeToggleCheckbox.checked = isDark; }
+            switchView(viewId) { if (this.currentView === viewId) return; const oldView = document.getElementById(this.currentView); if (oldView) { oldView.classList.add('exiting'); } setTimeout(() => { this.dom.views.forEach(view => view.classList.remove('active', 'exiting')); document.getElementById(viewId).classList.add('active'); }, 200); this.currentView = viewId; this.dom.navBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.view === viewId)); if (viewId === 'history-view') this.renderHistory(); if (viewId === 'ai-view') this.initAIView(); }
+            initAIView() { const lastWelcome = Store.getState().userStats.lastAiWelcome; const today = new Date().toLocaleDateString(); if (this.dom.aiChatLog.children.length === 0 || lastWelcome !== today) { this.dom.aiChatLog.innerHTML = ''; const todayViewHtml = AI.generateTodayView(Store.getState()); this.renderAIMessage(todayViewHtml, (el) => { el.querySelectorAll('.progress-bar-fg').forEach(bar => setTimeout(() => bar.style.width = bar.dataset.percent + '%', 100)); }); Store.updateUserStat('lastAiWelcome', today); } this.renderAISuggestions(); }
+            renderAISuggestions() { const suggestions = AI.generateSuggestions(Store.getState()); this.dom.aiSuggestions.innerHTML = suggestions.map(s => `<button class="suggestion-btn">${s}</button>`).join(''); this.dom.aiSuggestions.querySelectorAll('.suggestion-btn').forEach(btn => { btn.addEventListener('click', () => { this.dom.aiCommandBar.value = btn.textContent; this.handleAICommand(); }); }); }
+            async handleAICommand() { const command = this.dom.aiCommandBar.value; if (!command) return; this.renderUserMessage(command); this.dom.aiCommandBar.value = ''; const state = Store.getState(); const result = AI.processCommand(command); const getProject = (projectName) => { let project = AI.getProjectByName(state.projects, projectName); if (!project) { project = Store.addProject(projectName); this.showToast(`New project created: ${projectName}`); } return project; }; setTimeout(async () => { switch(result.intent) { case 'start_stopwatch': case 'start_timer': { const isTimer = result.intent === 'start_timer'; this.switchMode(isTimer ? 'timer' : 'stopwatch', false); let response; if(isTimer) { const h = Math.floor(result.duration / 3600000); const m = Math.floor((result.duration % 3600000) / 60000); const s = Math.floor((result.duration % 60000) / 1000); this.dom.hoursInput.value = h > 0 ? h : ''; this.dom.minutesInput.value = m > 0 ? m : ''; this.dom.secondsInput.value = s > 0 ? s : ''; this.timerEngine.setTimer(result.duration); response = `Okay, starting a ${Utils.formatTime(result.duration, false).full} timer.`; } else { response = "Stopwatch started."; } if (result.project) { getProject(result.project); } if (!this.timerEngine.isRunning) this.handleStartStop(); this.renderAIMessage(response); this.switchView('timer-view'); break; } default: this.renderAIMessage("I'm sorry, I don't understand that command."); break; } this.renderAISuggestions(); }, 500); }
+            renderUserMessage(text) { const el = document.createElement('div'); el.className = 'user-message'; el.textContent = text; this.dom.aiChatLog.appendChild(el); this.dom.aiChatLog.scrollTop = this.dom.aiChatLog.scrollHeight; }
+            renderAIMessage(html, callback) { const el = document.createElement('div'); el.className = 'ai-message'; el.innerHTML = html; const actions = document.createElement('div'); actions.className = 'data-actions'; el.appendChild(actions); this.dom.aiChatLog.appendChild(el); this.dom.aiChatLog.scrollTop = this.dom.aiChatLog.scrollHeight; if(callback) callback(el); }
+            renderChartInMessage(el, chartData) { const canvas = el.querySelector('canvas'); if(!canvas || !chartData) return; const isDark = Store.getState().theme === 'dark'; const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'; const labelColor = isDark ? '#f0f0f5' : '#1a1c2c'; new Chart(canvas, { type: chartData.type, data: chartData, options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: gridColor }, ticks: { color: labelColor, font: { family: "'Teko', sans-serif" } } }, x: { grid: { display: false }, ticks: { color: labelColor, font: { family: "'Teko', sans-serif" } } } } } }); }
+            createDigit(value) { const el = document.createElement('div'); el.className = 'flipper-container'; el.dataset.value = value; el.innerHTML = `<div class="digit-card"><span>${value}</span></div>`; return el; }
+            setupFlipDisplay() { ['hoursGroup', 'minutesGroup', 'secondsGroup'].forEach(id => { const group = this.dom[id]; group.innerHTML = ''; group.appendChild(this.createDigit('0')); group.appendChild(this.createDigit('0')); }); this.updateTimeDisplay(0); }
+            handleTimerFinished() { SoundEngine.playNotification(); navigator.vibrate?.([200, 50, 200]); }
+            switchMode(mode, reset = true) { if (this.timerEngine.isRunning) return; this.timerEngine.mode = mode; if (reset) this.timerEngine.reset(); this.dom.stopwatchModeBtn.classList.toggle('active', mode === 'stopwatch'); this.dom.timerModeBtn.classList.toggle('active', mode === 'timer'); this.dom.timerInputWrapper.style.display = mode === 'timer' ? 'flex' : 'none'; this.dom.lapResetBtn.textContent = mode === 'stopwatch' ? 'Lap' : 'Reset'; this.updateLapsDisplay(); }
+            async handleStartStop() { navigator.vibrate?.(20); if (this.timerEngine.isRunning) { this.timerEngine.stop(); await this.releaseWakeLock(); } else { await NotificationManager.requestPermission(); if (this.timerEngine.mode === 'timer') { const h = parseInt(this.dom.hoursInput.value || 0) * 3600; const m = parseInt(this.dom.minutesInput.value || 0) * 60; const s = parseInt(this.dom.secondsInput.value || 0); const durationMs = (h + m + s) * 1000; if (durationMs <= 0) { this.showToast("Please set a timer duration."); return; } this.timerEngine.setTimer(durationMs); } this.timerEngine.start(); await this.requestWakeLock(); } }
+            updateControlsUI(isRunning) { this.dom.startStopBtn.textContent = isRunning ? 'Stop' : 'Start'; this.dom.startStopBtn.classList.toggle('running', isRunning); this.dom.timerDisplayWrapper.classList.toggle('running', isRunning); this.dom.lapResetBtn.textContent = isRunning && this.timerEngine.mode === 'stopwatch' ? 'Lap' : 'Reset'; }
+            handleLapReset() { navigator.vibrate?.(10); if (this.timerEngine.isRunning) { if (this.timerEngine.mode === 'stopwatch') { this.timerEngine.lap(); } } else { this.timerEngine.reset(); this.updateLapsDisplay(); } }
+            updateTimeDisplay(ms) { const { ms: msPart, parts } = Utils.formatTime(ms, true, true); this.dom.msDisplay.textContent = msPart; if(this.lastTimeParts.seconds !== parts.seconds) this.updateFlipGroup('secondsGroup', parts.seconds); if(this.lastTimeParts.minutes !== parts.minutes) this.updateFlipGroup('minutesGroup', parts.minutes); if(this.lastTimeParts.hours !== parts.hours) this.updateFlipGroup('hoursGroup', parts.hours); this.lastTimeParts = parts; this.updateControlsUI(this.timerEngine.isRunning); }
+            updateFlipGroup(groupId, value) { const group = this.dom[groupId]; const containers = group.querySelectorAll('.flipper-container'); this.flipDigit(containers[0], value[0]); this.flipDigit(containers[1], value[1]); }
+            flipDigit(container, newValue) { const oldValue = container.dataset.value; if (oldValue === newValue) return; container.dataset.value = newValue; const flipper = document.createElement('div'); flipper.className = 'flipper'; flipper.innerHTML = `<div class="flipper-card top"><span>${oldValue}</span></div><div class="flipper-card bottom"><span>${newValue}</span></div>`; container.innerHTML = `<div class="digit-card"><span>${newValue}</span></div>`; container.appendChild(flipper); requestAnimationFrame(() => { flipper.classList.add('flipping'); flipper.addEventListener('animationend', () => flipper.remove(), { once: true }); }); }
+            updateLapsDisplay() { const laps = this.timerEngine.laps; this.dom.lapsContainer.innerHTML = laps.map((lap, index) => { const { full, ms } = Utils.formatTime(lap.time, true, false); return `<div class="lap-item"><span>Lap ${laps.length - index}</span><span>${full}.${ms}</span></div>`; }).join(''); }
+            renderHistory(customFilter = null) { const query = this.dom.historySearch.value.toLowerCase(); const history = Store.getHistory(); const projects = Store.getProjects(); const filteredHistory = history.filter(s => { if (customFilter) return customFilter(s); const project = projects.find(p => p.id === s.projectId); return s.label.toLowerCase().includes(query) || s.type.toLowerCase().includes(query) || (project && project.name.toLowerCase().includes(query)); }); this.dom.historyList.innerHTML = filteredHistory.length === 0 ? `<li style="text-align: center; opacity: 0.7;">No sessions found.</li>` : filteredHistory.map(s => this.createHistoryItemHTML(s, projects)).join(''); this.bindHistoryItemEvents(); }
+            createHistoryItemHTML(session, projects) { const { full } = Utils.formatTime(session.duration, false); const date = new Date(session.timestamp).toLocaleDateString(); const startTime = Utils.formatDateTime(session.startTime); const finishTime = Utils.formatDateTime(session.finishTime); const project = projects.find(p => p.id === session.projectId); const pinnedClass = session.isPinned ? 'is-pinned' : ''; return `<li class="history-item-wrapper ${pinnedClass}" data-id="${session.id}"><div class="swipe-actions"><button class="swipe-btn pin-btn"><i class="fa-solid fa-thumbtack"></i><span>${session.isPinned ? 'Unpin' : 'Pin'}</span></button><button class="swipe-btn edit-btn"><i class="fa-solid fa-pencil"></i><span>Edit</span></button><button class="swipe-btn delete-btn"><i class="fa-solid fa-trash"></i><span>Delete</span></button></div><div class="history-item"><div class="history-item-content"><div class="history-item-header"><span class="history-item-label">${session.label}</span><div class="history-item-duration">${full}<div class="history-item-times">${startTime} - ${finishTime}</div></div></div><div class="history-item-footer">${project ? `<span class="project-tag">${project.name}</span>` : '<span></span>'}<span>${date}</span></div></div></div></li>`; }
+            bindHistoryItemEvents() { this.dom.historyList.querySelectorAll('.history-item-wrapper').forEach(wrapper => { const item = wrapper.querySelector('.history-item'); const id = wrapper.dataset.id; let startX = 0; let currentX = 0; let isSwiping = false; const maxSwipe = 240; item.addEventListener('touchstart', (e) => { startX = e.touches[0].clientX; isSwiping = true; item.style.transition = 'none'; }, { passive: true }); item.addEventListener('touchmove', (e) => { if (!isSwiping) return; currentX = e.touches[0].clientX - startX; if (currentX < 0) { item.style.transform = `translateX(${currentX * Math.exp(currentX / maxSwipe * 0.5)}px)`; } else { item.style.transform = `translateX(0)`; } }, { passive: true }); item.addEventListener('touchend', () => { isSwiping = false; item.style.transition = 'transform var(--transition-speed) ease'; if (currentX < -60) item.style.transform = `translateX(-${maxSwipe}px)`; else item.style.transform = 'translateX(0)'; currentX = 0; }); wrapper.querySelector('.pin-btn').addEventListener('click', () => { Store.togglePin(id); this.renderHistory(); }); wrapper.querySelector('.edit-btn').addEventListener('click', () => this.openSessionModal('edit', id)); wrapper.querySelector('.delete-btn').addEventListener('click', () => { ConfirmationModal.show("Do you want to permanently delete this session?", "Delete Session").then(() => { wrapper.style.transition = 'transform 0.3s ease, opacity 0.3s ease'; wrapper.style.transform = 'scale(0.8)'; wrapper.style.opacity = '0'; setTimeout(() => { Store.deleteHistory(id); this.showToast("Session deleted."); this.renderHistory(); }, 300) }).catch(() => { item.style.transform = 'translateX(0)'; }); }); }); }
+            openSessionModal(type, id = null) { this.editingSession = { type, id }; const projects = Store.getProjects(); this.dom.projectSelect.innerHTML = '<option value="">None</option>' + projects.map(p => `<option value="${p.id}">${p.name}</option>`).join(''); this.dom.newProjectInput.value = ''; if (type === 'edit') { const session = Store.getHistory().find(s => s.id === id); if (!session) return; this.dom.modalTitle.innerHTML = '<i class="fa-solid fa-pen-to-square"></i> Edit Session'; this.dom.sessionLabelInput.value = session.label; this.dom.projectSelect.value = session.projectId || ''; this.dom.deleteSessionBtn.style.display = 'block'; } else { const sessionData = this.timerEngine.pendingSession; if (!sessionData) { console.warn("Tried to open modal with no pending session."); return; } this.dom.modalTitle.innerHTML = '<i class="fa-solid fa-save"></i> Save Session'; const suggestedLabel = sessionData?.label || `${sessionData?.type.charAt(0).toUpperCase() + sessionData?.type.slice(1) || 'New'} Session`; this.dom.sessionLabelInput.value = suggestedLabel; this.dom.projectSelect.value = sessionData?.projectId || ''; this.dom.deleteSessionBtn.style.display = 'none'; } this.dom.sessionModal.classList.add('visible'); this.dom.sessionLabelInput.focus(); }
+            closeSessionModal() { this.editingSession = null; this.dom.sessionModal.classList.remove('visible'); if (this.timerEngine.pendingSession && !this.timerEngine.isRunning) { this.timerEngine.pendingSession = null; this.timerEngine.reset(); } }
+            handleSaveSession() { const label = this.dom.sessionLabelInput.value.trim(); if (!label) { this.showToast("Please provide a session label."); return; } let projectId = this.dom.projectSelect.value; const newProjectName = this.dom.newProjectInput.value.trim(); if (newProjectName) { const project = Store.addProject(newProjectName); projectId = project.id; } if (this.editingSession.type === 'new') { const session = { id: Utils.generateUUID(), label, projectId, timestamp: new Date().toISOString(), ...this.timerEngine.pendingSession }; const oldGoals = JSON.stringify(AI.analyzeHistory(Store.getHistory(), Store.getProjects(), Store.getGoals()).goalProgress); Store.addHistory(session); AI.updateLearnings(Store.getState(), session); Store.save(); this.checkGoalCompletion(oldGoals); this.showToast(AI.getMotivationalFeedback()); } else { Store.updateHistory(this.editingSession.id, label, projectId); this.showToast('Session updated successfully!'); } this.renderHistory(); this.closeSessionModal(); }
+            async handleDeleteSession() { if (this.editingSession && this.editingSession.type === 'edit') { try { await ConfirmationModal.show("Do you want to permanently delete this session?", "Delete Session"); Store.deleteHistory(this.editingSession.id); this.showToast("Session deleted."); this.renderHistory(); this.closeSessionModal(); } catch (e) { /* User cancelled */ } } }
+            initSpeechRecognition() { const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition; if (SpeechRecognition) { this.speechRecognition = new SpeechRecognition(); this.speechRecognition.continuous = false; this.speechRecognition.lang = 'en-US'; this.speechRecognition.interimResults = false; this.speechRecognition.maxAlternatives = 1; this.speechRecognition.onstart = () => this.dom.voiceInputBtn.classList.add('listening'); this.speechRecognition.onend = () => this.dom.voiceInputBtn.classList.remove('listening'); this.speechRecognition.onerror = (event) => { this.dom.voiceInputBtn.classList.remove('listening'); this.showToast(`Voice error: ${event.error}`); }; this.speechRecognition.onresult = (event) => { const transcript = event.results[0][0].transcript; this.dom.aiCommandBar.value = transcript; this.handleAICommand(); }; } else { this.dom.voiceInputBtn.style.display = 'none'; } }
+            handleVoiceInput() { if (this.speechRecognition) { try { this.speechRecognition.start(); } catch (e) { this.showToast("Voice recognition is already active."); } } else { this.showToast("Voice recognition is not supported in your browser."); } }
+            handleExportData() { const data = JSON.stringify(Store.getState(), null, 2); const blob = new Blob([data], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `ChronoMind_Backup_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); this.renderAIMessage("Your data has been successfully exported."); }
+            async handleImportData(event) { const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = async (e) => { try { const importedState = JSON.parse(e.target.result); const confirmed = await ConfirmationModal.show("This will overwrite all current data. Are you sure?", "Import Data"); if (confirmed) { Store.replaceState(importedState); this.showToast("Data imported successfully!"); this.applyTheme(); this.renderHistory(); this.initAIView(); } else { this.showToast("Data import cancelled."); } } catch (error) { this.showToast(`Import failed: ${error.message}`); } finally { this.dom.importFileInput.value = ''; } }; reader.readAsText(file); }
+            checkGoalCompletion(oldGoalsJSON) { const oldGoals = JSON.parse(oldGoalsJSON); const { goalProgress: newGoals } = AI.analyzeHistory(Store.getHistory(), Store.getProjects(), Store.getGoals()); newGoals.forEach(newGoal => { const oldGoal = oldGoals.find(g => g.projectName === newGoal.projectName && g.frequency === newGoal.frequency); if (newGoal.percentage >= 100 && (!oldGoal || oldGoal.percentage < 100)) { this.showToast(`Goal Complete: ${newGoal.projectName} (${newGoal.frequency})`); this.triggerConfetti(); } }); }
+            triggerConfetti() { const colors = ['#007aff', '#34c759', '#ff9500', '#ff3b30', '#5856d6']; for (let i = 0; i < 100; i++) { const piece = document.createElement('div'); piece.className = 'confetti-piece'; piece.style.left = `${Math.random() * 100}vw`; piece.style.background = colors[Math.floor(Math.random() * colors.length)]; piece.style.animationDelay = `${Math.random() * 2}s`; piece.style.transform = `rotate(${Math.random() * 360}deg)`; this.dom.confettiContainer.appendChild(piece); setTimeout(() => piece.remove(), 4000); } }
+            showToast(message) { this.dom.toast.textContent = message; this.dom.toast.classList.add('show'); setTimeout(() => this.dom.toast.classList.remove('show'), 3000); }
+        }
+        document.addEventListener('DOMContentLoaded', () => new App());
+    </script>
+</body>
+</html>
