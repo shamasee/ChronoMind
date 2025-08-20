@@ -1,5 +1,10 @@
-const CACHE_NAME = 'chronomind-v8.1.0';
-// --- IMPORTANT: Corrected paths for GitHub Pages ---
+/**
+ * ChronoMind AI Service Worker (sw.js)
+ * Version: 8.1.2 (State Management & Bug Fix Release)
+ * Description: Fully manages timer state including sessionStartTime to prevent data loss on page refresh.
+ */
+
+const CACHE_NAME = 'chronomind-v8.1.2'; // Updated cache name to force refresh
 const APP_SHELL_URLS = [
     '/ChronoMind/',
     '/ChronoMind/index.html',
@@ -48,13 +53,15 @@ self.addEventListener('fetch', event => {
 // --- BACKGROUND TIMER LOGIC ---
 
 let timerInterval = null;
+// --- BUG FIX: Add sessionStartTime to the authoritative state ---
 let state = {
     isRunning: false,
     mode: 'stopwatch',
     startTime: 0,
     elapsedTime: 0,
     timerDuration: 0,
-    displayTime: 0
+    displayTime: 0,
+    sessionStartTime: null // <-- CRITICAL ADDITION
 };
 
 function formatTimeForNotification(ms) {
@@ -79,9 +86,9 @@ function showPersistentNotification() {
 
     self.registration.showNotification(title, {
         body: body,
-        tag: 'chronomind-timer', // An ID for the notification
+        tag: 'chronomind-timer',
         icon: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Icon-Stopwatch.svg/192px-Icon-Stopwatch.svg.png',
-        silent: true, // Prevents sound/vibration on each update
+        silent: true,
         renotify: false,
         actions: [
             { action: 'stop', title: 'Stop' }
@@ -95,40 +102,38 @@ function tick() {
     
     if (state.displayTime < 0) state.displayTime = 0;
 
-    // Broadcast the current state to all clients (open tabs)
     self.clients.matchAll().then(clients => {
         clients.forEach(client => {
             client.postMessage({ type: 'tick', state });
         });
     });
 
-    // Update notification every second
     showPersistentNotification();
 
     if (state.mode === 'timer' && state.displayTime <= 0) {
-        stopTimer(true); // Stop timer and notify that it finished
+        stopTimer(true);
     }
 }
 
 function startTimer(initialState) {
     if (state.isRunning) return;
+    // --- BUG FIX: The entire initial state, including sessionStartTime, is now managed here ---
     state = { ...state, ...initialState, isRunning: true };
     state.startTime = performance.now() - state.elapsedTime;
     timerInterval = setInterval(tick, 1000);
-    console.log('Service Worker: Timer started.');
+    console.log('Service Worker: Timer started with state:', state);
 }
 
 function stopTimer(isFinished = false) {
     if (!state.isRunning) return;
     state.isRunning = false;
-    if (state.startTime > 0) { // Ensure startTime was set before calculating
+    if (state.startTime > 0) {
         state.elapsedTime = performance.now() - state.startTime;
     }
     clearInterval(timerInterval);
     timerInterval = null;
     
-    // Notify clients that the timer has stopped
-     self.clients.matchAll().then(clients => {
+    self.clients.matchAll().then(clients => {
         clients.forEach(client => {
             client.postMessage({ type: 'stopped', state, isFinished });
         });
@@ -142,20 +147,21 @@ function stopTimer(isFinished = false) {
         });
     }
     
-    // Clear the persistent running notification
     showPersistentNotification();
-    console.log('Service Worker: Timer stopped.');
+    console.log('Service Worker: Timer stopped with final state:', state);
 }
 
 function resetTimer() {
     stopTimer();
+    // --- BUG FIX: Reset sessionStartTime as well ---
     state = {
         isRunning: false,
         mode: 'stopwatch',
         startTime: 0,
         elapsedTime: 0,
         timerDuration: 0,
-        displayTime: 0
+        displayTime: 0,
+        sessionStartTime: null // <-- CRITICAL RESET
     };
      self.clients.matchAll().then(clients => {
         clients.forEach(client => {
@@ -169,7 +175,6 @@ function resetTimer() {
 
 self.addEventListener('message', event => {
     const { command, data } = event.data;
-
     switch (command) {
         case 'start':
             startTimer(data);
@@ -195,12 +200,10 @@ self.addEventListener('notificationclick', event => {
         stopTimer(event.notification.tag === 'chronomind-timer' && state.mode === 'timer' && state.displayTime <= 0);
     }
 
-    // This URL must also be corrected for GitHub Pages
     const appUrl = '/ChronoMind/';
     event.waitUntil(
         self.clients.matchAll({ type: 'window' }).then(clients => {
             for (const client of clients) {
-                // Check if the client URL ends with the appUrl, which is more robust
                 if (client.url.endsWith(appUrl) && 'focus' in client) {
                     return client.focus();
                 }
